@@ -25,10 +25,28 @@
 
 static int my_id;
 
-STATE(freed);
+STATE(freed); // static struct smatch_sstate freed = { .name = "freed" } 
+/*
+struct smatch_state {
+	const char *name;
+	void *data;
+}
+*/
 
 static struct symbol *this_func;
 static struct tracker_list *freed_args = NULL;
+
+/* smatch.h
+ struct tracker_list { struct tracker *list[1] };
+*/
+
+/* 
+struct tracker {
+	char *name;
+	struct symbol *sym;
+	unsigned short owner;
+}; 
+*/
 
 static void match_function_def(struct symbol *sym)
 {
@@ -44,7 +62,8 @@ static int is_arg(char *name, struct symbol *sym)
 		arg_name = (arg->ident?arg->ident->name:"-");
 		if (sym == arg && !strcmp(name, arg_name))
 			return 1;
-	} END_FOR_EACH_PTR(arg);
+	} END_FOR_EACH_PTR(arg); 
+	// if symbols are same and arg names are same, then we have freed this arg too this_func
 	return 0;
 }
 
@@ -54,10 +73,10 @@ static void match_kfree(const char *fn, struct expression *expr, void *info)
 	struct symbol *sym;
 	char *name;
 
-	tmp = get_argument_from_call_expr(expr->args, 0);
+	tmp = get_argument_from_call_expr(expr->args, 0);  // get arg at pos 0
 	tmp = strip_expr(tmp);
 	name = expr_to_var_sym(tmp, &sym);
-	if (is_arg(name, sym)) {
+	if (is_arg(name, sym)) { // is it an arg to this_func?
 		set_state(my_id, name, sym, &freed);
 	}
 	free_string(name);
@@ -75,8 +94,11 @@ static void match_return(struct expression *ret_value)
 
 	if (!return_count) {
 		stree = __get_cur_stree();
+		// loop over all of my states in global stree 
 		FOR_EACH_MY_SM(my_id, stree, tmp) {
+		    	// struct sm_state *tmp
 			if (tmp->state == &freed)
+			    	// track this arg has been freed
 				add_tracker(&freed_args, my_id, tmp->name,
 					    tmp->sym);
 		} END_FOR_EACH_SM(tmp);
@@ -96,7 +118,7 @@ static void print_arg(struct symbol *sym)
 	int i = 0;
 
 	FOR_EACH_PTR(this_func->ctype.base_type->arguments, arg) {
-		if (sym == arg) {
+		if (sym == arg) { // print index of freed arg
 			sm_info("free_arg %s %d", get_function(), i);
 			return;
 		}
@@ -109,7 +131,7 @@ static void match_end_func(struct symbol *sym)
 	if (__inline_fn)
 		return;
 	if (is_reachable())
-		match_return(NULL);
+		match_return(NULL); // because not all functions have return stmts
 }
 
 static void match_after_func(struct symbol *sym)
@@ -123,7 +145,7 @@ static void match_after_func(struct symbol *sym)
 		print_arg(tracker->sym);
 	} END_FOR_EACH_PTR(tracker);
 
-	free_trackers_and_list(&freed_args);
+	free_trackers_and_list(&freed_args);  // empty tracker list after each fn
 	return_count = 0;
 }
 

@@ -138,6 +138,7 @@ CK(check_impossible_mask)
 
 /* <- your test goes here */
 /* CK(register_template) */
+// CK(check_implicit_dependencies)
 
 /* kernel specific */
 CK(check_kernel_printf)

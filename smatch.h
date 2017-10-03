@@ -80,7 +80,7 @@ struct sm_state {
 	struct stree *pool;
 	struct sm_state *left;
 	struct sm_state *right;
-	struct state_list *possible;
+	struct state_list *possible; // list of struct sm_state
 };
 
 struct var_sym {

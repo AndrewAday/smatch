@@ -448,7 +448,7 @@ void check_memory(int id)
 {
 	my_id = id;
 	add_unmatched_state_hook(my_id, &unmatched_state);
-	add_hook(&match_function_def, FUNC_DEF_HOOK);
+	add_hook(&match_function_def, FUNC_DEF_HOOK); // add all function arguments to tracker_list
 	add_hook(&match_declarations, DECLARATION_HOOK);
 	add_hook(&match_function_call, FUNCTION_CALL_HOOK);
 	add_hook(&match_condition, CONDITION_HOOK);
