@@ -84,6 +84,11 @@ sval_t valid_ptr_max_sval = {
 	{.value = LONG_MAX - 100000},
 };
 
+/* Added for tracking syscall implicit dependencies */
+struct symbol *current_syscall;
+static void set_current_syscall(struct symbol *sym);
+/* ------------------------------------------------ */
+
 static void set_valid_ptr_max(void)
 {
 	if (type_bits(&ptr_ctype) == 32)
@@ -179,35 +184,62 @@ int inlinable(struct expression *expr)
 	struct symbol *sym;
 	struct statement *last_stmt = NULL;
 
-	if (__inline_fn)  /* don't nest */
-		return 0;
+	if (expr->symbol->ident) {
+	    // printf("%s:%d %s:::", get_filename(), get_lineno(), get_function()); 
+	    // printf("inlineable: %s\n", expr->symbol->ident->name);
+	}
 
-	if (expr->type != EXPR_SYMBOL || !expr->symbol)
+	// if (__inline_fn && !current_syscall)  { /* don't nest */
+	if (__inline_fn) {
+		// printf("\t no __inline_fn\n");
 		return 0;
-	if (is_no_inline_function(expr->symbol->ident->name))
+	}
+
+	if (expr->type != EXPR_SYMBOL || !expr->symbol) {
+		// printf("\t no symbol\n");
 		return 0;
+	}
+	if (is_no_inline_function(expr->symbol->ident->name)) {
+		// printf("\t is_no_inline_function\n");
+		return 0;
+	}
 	sym = get_base_type(expr->symbol);
 	if (sym->stmt && sym->stmt->type == STMT_COMPOUND) {
-		if (ptr_list_size((struct ptr_list *)sym->stmt->stmts) > 10)
+		// if (ptr_list_size((struct ptr_list *)sym->stmt->stmts) > 10) {
+		if (ptr_list_size((struct ptr_list *)sym->stmt->stmts) > 9000) {
+			// printf("\t ptr_list_size of stmts > 10\n");
 			return 0;
-		if (sym->stmt->type != STMT_COMPOUND)
+		}
+		if (sym->stmt->type != STMT_COMPOUND) {
+			// printf("\t stmt not compound?\n");
 			return 0;
+		}
 		last_stmt = last_ptr_list((struct ptr_list *)sym->stmt->stmts);
 	}
 	if (sym->inline_stmt && sym->inline_stmt->type == STMT_COMPOUND) {
-		if (ptr_list_size((struct ptr_list *)sym->inline_stmt->stmts) > 10)
+		// if (ptr_list_size((struct ptr_list *)sym->inline_stmt->stmts) > 10) {
+		if (ptr_list_size((struct ptr_list *)sym->inline_stmt->stmts) > 9000) {
+			// printf("\t ptr_list_size of inline_stmts > 10\n");
 			return 0;
-		if (sym->inline_stmt->type != STMT_COMPOUND)
+		}
+		if (sym->inline_stmt->type != STMT_COMPOUND) {
+			// printf("\t inline stmt not compound\n");
 			return 0;
+		}
 		last_stmt = last_ptr_list((struct ptr_list *)sym->inline_stmt->stmts);
 	}
 
-	if (!last_stmt)
+	if (!last_stmt) {
+		// printf("\t no last stmt\n");
 		return 0;
+	}
 
 	/* the magic numbers in this function are pulled out of my bum. */
-	if (last_stmt->pos.line > sym->pos.line + 20)
+	// if (last_stmt->pos.line > sym->pos.line + 20)
+	if (last_stmt->pos.line > sym->pos.line + 1000) {
+		// printf("\t last_stmt too long yo\n");
 		return 0;
+	}
 
 	return 1;
 }
@@ -1458,9 +1490,36 @@ static void fake_global_assign(struct symbol *sym)
 	}
 }
 
+static void set_current_syscall(struct symbol *sym)
+{
+	char *macro;
+	char *name;
+	int is_syscall = 0;
+
+	macro = get_macro_name(sym->pos);
+	if (macro &&
+	    (strncmp("SYSCALL_DEFINE", macro, strlen("SYSCALL_DEFINE")) == 0 ||
+	     strncmp("COMPAT_SYSCALL_DEFINE", macro, strlen("COMPAT_SYSCALL_DEFINE")) == 0))
+		is_syscall = 1;
+
+	name = get_function();
+
+	if (name && strncmp(name, "sys_", 4) ==0)
+		is_syscall = 1;
+	
+	if (name && strncmp(name, "compat_sys_", 11) == 0)
+		is_syscall = 1;
+
+	if (!is_syscall)
+		return;
+	current_syscall = sym;
+}
+    
+
 static void start_function_definition(struct symbol *sym)
 {
-	__in_function_def = 1;
+	set_current_syscall(sym);
+    	__in_function_def = 1;
 	__pass_to_client(sym, FUNC_DEF_HOOK);
 	__in_function_def = 0;
 	__pass_to_client(sym, AFTER_DEF_HOOK);
@@ -1502,6 +1561,9 @@ static void split_function(struct symbol *sym)
 	if (need_delayed_scope_hooks())
 		__call_scope_hooks();
 	__pass_to_client(sym, AFTER_FUNC_HOOK);
+
+	if (current_syscall == sym)
+	    current_syscall = NULL;
 
 	clear_all_states();
 	cur_func_sym = NULL;

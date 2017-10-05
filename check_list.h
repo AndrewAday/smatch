@@ -138,7 +138,6 @@ CK(check_impossible_mask)
 
 /* <- your test goes here */
 /* CK(register_template) */
-// CK(check_implicit_dependencies)
 
 /* kernel specific */
 CK(check_kernel_printf)
@@ -160,6 +159,9 @@ CK(check_capable)
 CK(check_ns_capable)
 CK(check_test_bit)
 CK(check_dma_mapping_error)
+// CK(check_ioctl_tracer)
+CK(check_implicit_dependencies)
+// CK(check_condition_data)
 
 /* wine specific stuff */
 CK(check_wine_filehandles)

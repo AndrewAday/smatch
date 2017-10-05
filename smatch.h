@@ -434,6 +434,7 @@ int is_assigned_call(struct expression *expr);
 int inlinable(struct expression *expr);
 extern int __inline_call;
 extern struct expression *__inline_fn;
+extern struct symbol *current_syscall;
 extern int __in_pre_condition;
 extern int __bail_on_rest_of_function;
 extern struct statement *__prev_stmt;
@@ -718,6 +719,8 @@ enum info_type {
 	ATOMIC_INC	= 8023,
 	ATOMIC_DEC	= 8024,
 	NO_SIDE_EFFECT  = 8025,
+       IOCTL_CMD       = 8026,
+       IOCTL_ARG       = 8027,
 	ARRAYSIZE_ARG	= 8033,
 	SIZEOF_ARG	= 8034,
 };

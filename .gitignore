@@ -5,7 +5,10 @@
 *.so
 *~
 .*.swp
+*.swo
 .gdb_history
+.ycm*
+*.patch
 
 # generated
 pre-process.h
@@ -50,3 +53,4 @@ local.mk
 
 # local smatch checks
 check_list_local.h
+
