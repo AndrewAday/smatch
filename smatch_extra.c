@@ -789,16 +789,6 @@ static void do_array_assign(struct expression *left, int op, struct expression *
 	set_extra_array_mod(left, alloc_estate_rl(rl));
 }
 
-static void match_untracked_array(struct expression *call, int param)
-{
-	struct expression *arg;
-
-	arg = get_argument_from_call_expr(call->args, param);
-	arg = strip_expr(arg);
-
-	clear_array_states(arg);
-}
-
 static void match_vanilla_assign(struct expression *left, struct expression *right)
 {
 	struct range_list *orig_rl = NULL;
@@ -1184,14 +1174,28 @@ static void find_dereferences(struct expression *expr)
 	}
 }
 
-static void set_param_dereferenced(struct expression *arg, char *key, char *unused)
+static void set_param_dereferenced(struct expression *call, struct expression *arg, char *key, char *unused)
 {
 	struct symbol *sym;
 	char *name;
 
 	name = get_variable_from_key(arg, key, &sym);
-	if (name && sym)
-		set_extra_nomod(name, sym, alloc_estate_range(valid_ptr_min_sval, valid_ptr_max_sval));
+	if (name && sym) {
+		struct smatch_state *orig, *new;
+		struct range_list *rl;
+
+		orig = get_state(SMATCH_EXTRA, name, sym);
+		if (orig) {
+			rl = rl_intersection(estate_rl(orig),
+					     alloc_rl(valid_ptr_min_sval,
+						      valid_ptr_max_sval));
+			new = alloc_estate_rl(rl);
+		} else {
+			new = alloc_estate_range(valid_ptr_min_sval, valid_ptr_max_sval);
+		}
+
+		set_extra_nomod(name, sym, new);
+	}
 	free_string(name);
 
 	find_dereferences(arg);
@@ -1864,6 +1868,7 @@ void __extra_match_condition(struct expression *expr)
 	struct smatch_state *pre_state;
 	struct smatch_state *true_state;
 	struct smatch_state *false_state;
+	struct range_list *pre_rl;
 
 	expr = strip_expr(expr);
 	switch (expr->type) {
@@ -1879,11 +1884,17 @@ void __extra_match_condition(struct expression *expr)
 		zero.value = 0;
 
 		pre_state = get_extra_state(expr);
-		true_state = estate_filter_sval(pre_state, zero);
-		if (possibly_true(expr, SPECIAL_EQUAL, zero_expr()))
+		if (estate_is_empty(pre_state))
+			return;
+		if (pre_state)
+			pre_rl = estate_rl(pre_state);
+		else
+			get_absolute_rl(expr, &pre_rl);
+		if (possibly_true_rl(pre_rl, SPECIAL_EQUAL, rl_zero()))
 			false_state = alloc_estate_sval(zero);
 		else
 			false_state = alloc_estate_empty();
+		true_state = alloc_estate_rl(remove_range(pre_rl, zero, zero));
 		set_extra_expr_true_false(expr, true_state, false_state);
 		return;
 	}
@@ -2508,7 +2519,6 @@ void register_smatch_extra_late(int id)
 	add_hook(&match_assign, GLOBAL_ASSIGNMENT_HOOK);
 	add_hook(&unop_expr, OP_HOOK);
 	add_hook(&asm_expr, ASM_HOOK);
-	add_untracked_param_hook(&match_untracked_array);
 
 	add_hook(&match_call_info, FUNCTION_CALL_HOOK);
 	add_member_info_callback(my_id, struct_member_callback);

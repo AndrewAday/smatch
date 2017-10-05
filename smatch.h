@@ -90,6 +90,12 @@ struct var_sym {
 DECLARE_ALLOCATOR(var_sym);
 DECLARE_PTR_LIST(var_sym_list, struct var_sym);
 
+struct constraint {
+	int op;
+	int id;
+};
+DECLARE_PTR_LIST(constraint_list, struct constraint);
+
 enum hook_type {
 	EXPR_HOOK,
 	STMT_HOOK,
@@ -707,6 +713,9 @@ enum info_type {
 	BYTE_UNITS      = 1027,
 	COMPARE_LIMIT	= 1028,
 	PARAM_COMPARE	= 1029,
+	CONSTRAINT	= 1031,
+	PASSES_TYPE	= 1032,
+	CONSTRAINT_REQUIRED = 1033,
 
 	/* put random temporary stuff in the 7000-7999 range for testing */
 	USER_DATA3	= 8017,
@@ -719,8 +728,10 @@ enum info_type {
 	ATOMIC_INC	= 8023,
 	ATOMIC_DEC	= 8024,
 	NO_SIDE_EFFECT  = 8025,
-       IOCTL_CMD       = 8026,
-       IOCTL_ARG       = 8027,
+        IOCTL_CMD       = 8026,
+        IOCTL_ARG       = 8027,
+	FN_ARG_LINK	= 8028,
+	DATA_VALUE	= 8029,
 	ARRAYSIZE_ARG	= 8033,
 	SIZEOF_ARG	= 8034,
 };
@@ -731,7 +742,7 @@ void select_caller_info_hook(void (*callback)(const char *name, struct symbol *s
 void add_member_info_callback(int owner, void (*callback)(struct expression *call, int param, char *printed_name, struct sm_state *sm));
 void add_split_return_callback(void (*fn)(int return_id, char *return_ranges, struct expression *returned_expr));
 void add_returned_member_callback(int owner, void (*callback)(int return_id, char *return_ranges, struct expression *expr, char *printed_name, struct smatch_state *state));
-void select_call_implies_hook(int type, void (*callback)(struct expression *arg, char *key, char *value));
+void select_call_implies_hook(int type, void (*callback)(struct expression *call, struct expression *arg, char *key, char *value));
 struct range_list *db_return_vals(struct expression *expr);
 struct range_list *db_return_vals_from_str(const char *fn_name);
 char *return_state_to_var_sym(struct expression *expr, int param, const char *key, struct symbol **sym);
@@ -779,11 +790,13 @@ void sql_insert_function_type(int param, const char *value);
 void sql_insert_parameter_name(int param, const char *value);
 void sql_insert_data_info(struct expression *data, int type, const char *value);
 void sql_insert_data_info_var_sym(const char *var, struct symbol *sym, int type, const char *value);
+void sql_save_constraint(const char *con);
+void sql_save_constraint_required(const char *data, int op, const char *limit);
+void sql_insert_fn_ptr_data_link(const char *ptr, const char *data);
+void sql_insert_fn_data_link(struct expression *fn, int type, int param, const char *key, const char *value);
 
 void sql_select_return_states(const char *cols, struct expression *call,
 	int (*callback)(void*, int, char**, char**), void *info);
-void sql_select_caller_info(const char *cols, struct symbol *sym,
-	int (*callback)(void*, int, char**, char**));
 void sql_select_call_implies(const char *cols, struct expression *call,
 	int (*callback)(void*, int, char**, char**));
 
@@ -810,6 +823,7 @@ enum project_type {
 	PROJ_NONE,
 	PROJ_KERNEL,
 	PROJ_WINE,
+	PROJ_UNKNOWN,
 };
 extern enum project_type option_project;
 const char *check_name(unsigned short id);
@@ -966,6 +980,7 @@ void set_auto_copy(int owner);
 struct expression *get_size_variable(struct expression *buf);
 
 /* smatch_untracked_param.c */
+void mark_untracked(struct expression *expr, int param, const char *key, const char *value);
 void add_untracked_param_hook(void (func)(struct expression *call, int param));
 
 /* smatch_strings.c */
@@ -987,6 +1002,13 @@ int db_var_is_array_limit(struct expression *array, const char *name, struct var
 
 struct stree *get_all_return_states(void);
 struct stree_stack *get_all_return_strees(void);
+int was_inced(const char *name, struct symbol *sym);
+
+/* smatch_constraints.c */
+char *get_constraint_str(struct expression *expr);
+struct constraint_list *get_constraints(struct expression *expr);
+char *unmet_constraint(struct expression *data, struct expression *offset);
+char *get_required_constraint(const char *data_str);
 
 static inline int type_bits(struct symbol *type)
 {
@@ -1015,7 +1037,7 @@ static inline int type_positive_bits(struct symbol *type)
 	if (!type)
 		return 0;
 	if (type->type == SYM_ARRAY)
-		return bits_in_pointer;
+		return bits_in_pointer - 1;
 	if (type_unsigned(type))
 		return type_bits(type);
 	return type_bits(type) - 1;

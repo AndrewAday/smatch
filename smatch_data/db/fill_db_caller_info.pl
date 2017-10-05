@@ -6,7 +6,7 @@ use Scalar::Util qw(looks_like_number);
 
 sub usage()
 {
-    print "usage:  $0 <-p=project> <smatch_warns.txt> <db_file>\n";
+    print "usage:  $0 <project> <smatch_warns.txt> <db_file>\n";
     exit(1);
 }
 
@@ -35,6 +35,15 @@ sub get_too_common_functions($$$)
         $too_common_funcs{$_} = 1;
     }
     close(FILE);
+
+    open(FILE, ">", "$path/../$project.common_functions");
+    foreach my $func (keys %too_common_funcs) {
+        if ($func =~ / /) {
+            next;
+        }
+        print FILE "$func\n";
+    }
+    close(FILE);
 }
 
 my $exec_name = $0;
@@ -58,7 +67,9 @@ $db->do("PRAGMA temp_store = MEMORY");
 $db->do("PRAGMA locking = EXCLUSIVE");
 
 foreach my $func (keys %too_common_funcs) {
-    $db->do("insert into caller_info values ('unknown', 'too common', '$func', 0, 0, 0, -1, '', '');");
+    if ($func =~ / /) {
+        $db->do("insert into caller_info values ('unknown', 'too common', '$func', 0, 0, 0, -1, '', '');");
+    }
 }
 
 my $call_id = 0;
@@ -80,17 +91,17 @@ while (<WARNS>) {
         next;
     }
 
-    if (defined($too_common_funcs{$fn})) {
+    if (defined($too_common_funcs{$fn}) && $too_common_funcs{$fn} =~ / /) {
         next;
     }
 
     ($dummy, $dummy, $sql) = split(/:/, $_, 3);
 
-    $sql =~ s/%CALL_ID%/$call_id/;
     if ($sql =~ /%call_marker%/) {
         $sql =~ s/%call_marker%//; # don't need this taking space in the db.
         $call_id++;
     }
+    $sql =~ s/%CALL_ID%/$call_id/;
 
     $db->do($sql);
 }

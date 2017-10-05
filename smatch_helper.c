@@ -124,15 +124,27 @@ struct expression *get_argument_from_call_expr(struct expression_list *args,
 
 static struct expression *get_array_expr(struct expression *expr)
 {
+	struct expression *parent;
 	struct symbol *type;
 
 	if (expr->type != EXPR_BINOP || expr->op != '+')
 		return NULL;
 
 	type = get_type(expr->left);
-	if (!type || type->type != SYM_ARRAY)
+	if (!type)
 		return NULL;
-	return expr->left;
+	if (type->type == SYM_ARRAY)
+		return expr->left;
+	if (type->type != SYM_PTR)
+		return NULL;
+
+	parent = expr_get_parent_expr(expr);
+	if (!parent)
+		return NULL;
+	if (parent->type == EXPR_PREOP && parent->op == '*')
+		return expr->left;
+
+	return NULL;
 }
 
 static void __get_variable_from_expr(struct symbol **sym_ptr, char *buf,
@@ -288,12 +300,16 @@ static void __get_variable_from_expr(struct symbol **sym_ptr, char *buf,
 					 complicated, no_parens);
 		return;
 	case EXPR_SIZEOF: {
+		sval_t sval;
 		int size;
 		char tmp[25];
 
 		if (expr->cast_type && get_base_type(expr->cast_type)) {
 			size = type_bytes(get_base_type(expr->cast_type));
 			snprintf(tmp, 25, "%d", size);
+			append(buf, tmp, len);
+		} else if (get_value(expr, &sval)) {
+			snprintf(tmp, 25, "%s", sval_to_str(sval));
 			append(buf, tmp, len);
 		}
 		return;
@@ -427,6 +443,32 @@ int get_complication_score(struct expression *expr)
 	}
 }
 
+struct expression *reorder_expr_alphabetically(struct expression *expr)
+{
+	struct expression *ret;
+	char *left, *right;
+
+	if (expr->type != EXPR_BINOP)
+		return expr;
+	if (expr->op != '+' && expr->op != '*')
+		return expr;
+
+	left = expr_to_var(expr->left);
+	right = expr_to_var(expr->right);
+	ret = expr;
+	if (!left || !right)
+		goto free;
+	if (strcmp(left, right) <= 0)
+		goto free;
+
+	ret = binop_expression(expr->right, expr->op, expr->left);
+free:
+	free_string(left);
+	free_string(right);
+
+	return ret;
+}
+
 char *expr_to_chunk_helper(struct expression *expr, struct symbol **sym, struct var_sym_list **vsl)
 {
 	char *name;
@@ -461,6 +503,8 @@ char *expr_to_chunk_helper(struct expression *expr, struct symbol **sym, struct 
 		if (!*vsl)
 			return NULL;
 	}
+
+	expr = reorder_expr_alphabetically(expr);
 
 	return expr_to_str(expr);
 }
@@ -894,7 +938,8 @@ int invert_op(int op)
 
 int expr_equiv(struct expression *one, struct expression *two)
 {
-	struct symbol *one_sym, *two_sym;
+	struct symbol *one_sym = NULL;
+	struct symbol *two_sym = NULL;
 	char *one_name = NULL;
 	char *two_name = NULL;
 	int ret = 0;
@@ -905,12 +950,19 @@ int expr_equiv(struct expression *one, struct expression *two)
 		return 0;
 
 	one_name = expr_to_str_sym(one, &one_sym);
-	if (!one_name || !one_sym)
+	if (!one_name)
 		goto free;
 	two_name = expr_to_str_sym(two, &two_sym);
-	if (!two_name || !two_sym)
+	if (!two_name)
 		goto free;
 	if (one_sym != two_sym)
+		goto free;
+	/*
+	 * This is a terrible hack because expr_to_str() sometimes gives up in
+	 * the middle and just returns what it has.  If you see a () you know
+	 * the string is bogus.
+	 */
+	if (strstr(one_name, "()"))
 		goto free;
 	if (strcmp(one_name, two_name) == 0)
 		ret = 1;

@@ -29,7 +29,7 @@ static sqlite3 *mem_db;
 
 static int return_id;
 
-#define sql_insert(table, values...)						\
+#define sql_insert_helper(table, ignore, values...)				\
 do {										\
 	if (__inline_fn) {							\
 		char buf[1024];							\
@@ -40,7 +40,8 @@ do {										\
 			break;							\
 										\
 		p += snprintf(p, buf + sizeof(buf) - p,				\
-			      "insert into %s values (", #table);		\
+			      "insert %sinto %s values (",			\
+			      ignore ? "or ignore " : "", #table);		\
 		p += snprintf(p, buf + sizeof(buf) - p, values);		\
 		p += snprintf(p, buf + sizeof(buf) - p, ");");			\
 		sm_debug("in-mem: %s\n", buf);					\
@@ -54,10 +55,15 @@ do {										\
 	}									\
 	if (option_info) {							\
 		sm_prefix();							\
-	        sm_printf("SQL: insert into " #table " values (" values);	\
+	        sm_printf("SQL: insert %sinto " #table " values(",		\
+			  ignore ? "or ignore " : "");				\
+	        sm_printf(values);						\
 	        sm_printf(");\n");						\
 	}									\
 } while (0)
+
+#define sql_insert(table, values...) sql_insert_helper(table, 0, values);
+#define sql_insert_or_ignore(table, values...) sql_insert_helper(table, 1, values);
 
 struct def_callback {
 	int hook_type;
@@ -65,7 +71,7 @@ struct def_callback {
 };
 ALLOCATOR(def_callback, "definition db hook callbacks");
 DECLARE_PTR_LIST(callback_list, struct def_callback);
-static struct callback_list *callbacks;
+static struct callback_list *select_caller_info_callbacks;
 
 struct member_info_callback {
 	int owner;
@@ -92,7 +98,7 @@ static struct returned_member_cb_list *returned_member_callbacks;
 
 struct call_implies_callback {
 	int type;
-	void (*callback)(struct expression *arg, char *key, char *value);
+	void (*callback)(struct expression *call, struct expression *arg, char *key, char *value);
 };
 ALLOCATOR(call_implies_callback, "call_implies callbacks");
 DECLARE_PTR_LIST(call_implies_cb_list, struct call_implies_callback);
@@ -194,6 +200,9 @@ static int is_common_function(const char *fn)
 {
 	char *tmp;
 
+	if (!fn)
+		return 0;
+
 	if (strncmp(fn, "__builtin_", 10) == 0)
 		return 1;
 
@@ -203,6 +212,11 @@ static int is_common_function(const char *fn)
 	} END_FOR_EACH_PTR(tmp);
 
 	return 0;
+}
+
+static char *function_signature(void)
+{
+	return type_to_str(get_real_base_type(cur_func_sym));
 }
 
 void sql_insert_caller_info(struct expression *call, int type,
@@ -230,7 +244,7 @@ void sql_insert_caller_info(struct expression *call, int type,
 	if (!option_info)
 		return;
 
-	if (is_common_function(fn))
+	if (strncmp(fn, "__builtin_", 10) == 0)
 		return;
 
 	sm_msg("SQL_caller_info: insert into caller_info values ("
@@ -249,7 +263,7 @@ void sql_insert_function_ptr(const char *fn, const char *struct_name)
 
 void sql_insert_call_implies(int type, int param, const char *key, const char *value)
 {
-	sql_insert(call_implies, "'%s', '%s', %lu, %d, %d, %d, '%s', %s", get_base_file(),
+	sql_insert(call_implies, "'%s', '%s', %lu, %d, %d, %d, '%s', '%s'", get_base_file(),
 	           get_function(), (unsigned long)__inline_fn, fn_static(),
 		   type, param, key, value);
 }
@@ -300,6 +314,36 @@ void sql_insert_data_info_var_sym(const char *var, struct symbol *sym, int type,
 		   var, type, value);
 }
 
+void sql_save_constraint(const char *con)
+{
+	if (!option_info)
+		return;
+
+        sm_msg("SQL: insert or ignore into constraints (str) values('%s');", con);
+}
+
+void sql_save_constraint_required(const char *data, int op, const char *limit)
+{
+	sql_insert_or_ignore(constraints_required, "'%s', '%s', '%s'", data, show_special(op), limit);
+}
+
+void sql_insert_fn_ptr_data_link(const char *ptr, const char *data)
+{
+	sql_insert(fn_ptr_data_link, "'%s', '%s'", ptr, data);
+}
+
+void sql_insert_fn_data_link(struct expression *fn, int type, int param, const char *key, const char *value)
+{
+	if (fn->type != EXPR_SYMBOL || !fn->symbol->ident)
+		return;
+
+	sql_insert(fn_data_link, "'%s', '%s', %d, %d, %d, '%s', '%s'",
+		   (fn->symbol->ctype.modifiers & MOD_STATIC) ? get_base_file() : "extern",
+		   fn->symbol->ident->name,
+		   !!(fn->symbol->ctype.modifiers & MOD_STATIC),
+		   type, param, key, value);
+}
+
 char *get_static_filter(struct symbol *sym)
 {
 	static char sql_filter[1024];
@@ -333,6 +377,16 @@ static int get_row_count(void *_row_count, int argc, char **argv, char **azColNa
 	return 0;
 }
 
+static void mark_params_untracked(struct expression *call)
+{
+	struct expression *arg;
+	int i = 0;
+
+	FOR_EACH_PTR(call->args, arg) {
+		mark_untracked(call, i++, "$", NULL);
+	} END_FOR_EACH_PTR(arg);
+}
+
 static void sql_select_return_states_pointer(const char *cols,
 	struct expression *call, int (*callback)(void*, int, char**, char**), void *info)
 {
@@ -348,8 +402,10 @@ static void sql_select_return_states_pointer(const char *cols,
 		"where return_states.function == function_ptr.function and "
 		"ptr = '%s' and searchable = 1 and type = %d;", ptr, INTERNAL);
 	/* The magic number 100 is just from testing on the kernel. */
-	if (return_count > 100)
+	if (return_count > 100) {
+		mark_params_untracked(call);
 		return;
+	}
 
 	run_sql(callback, info,
 		"select %s from return_states join function_ptr where "
@@ -414,17 +470,27 @@ void sql_select_call_implies(const char *cols, struct expression *call,
 		cols, get_static_filter(call->fn->symbol));
 }
 
-void sql_select_caller_info(const char *cols, struct symbol *sym,
+struct select_caller_info_data {
+	struct stree *final_states;
+	int prev_func_id;
+	int ignore;
+};
+
+static void sql_select_caller_info(struct select_caller_info_data *data,
+	const char *cols, struct symbol *sym,
 	int (*callback)(void*, int, char**, char**))
 {
 	if (__inline_fn) {
-		mem_sql(callback, NULL,
+		mem_sql(callback, data,
 			"select %s from caller_info where call_id = %lu;",
 			cols, (unsigned long)__inline_fn);
 		return;
 	}
 
-	run_sql(callback, NULL,
+	if (sym->ident->name && is_common_function(sym->ident->name))
+		return;
+
+	run_sql(callback, data,
 		"select %s from caller_info where %s order by call_id;",
 		cols, get_static_filter(sym));
 }
@@ -435,7 +501,7 @@ void select_caller_info_hook(void (*callback)(const char *name, struct symbol *s
 
 	def_callback->hook_type = type;
 	def_callback->callback = callback;
-	add_ptr_list(&callbacks, def_callback);
+	add_ptr_list(&select_caller_info_callbacks, def_callback);
 }
 
 /*
@@ -469,7 +535,7 @@ void add_returned_member_callback(int owner, void (*callback)(int return_id, cha
 	add_ptr_list(&returned_member_callbacks, member_callback);
 }
 
-void select_call_implies_hook(int type, void (*callback)(struct expression *arg, char *key, char *value))
+void select_call_implies_hook(int type, void (*callback)(struct expression *call, struct expression *arg, char *key, char *value))
 {
 	struct call_implies_callback *cb = __alloc_call_implies_callback(0);
 
@@ -547,13 +613,19 @@ struct range_list *db_return_vals_from_str(const char *fn_name)
 
 static void match_call_marker(struct expression *expr)
 {
+	struct symbol *type;
+
+	type = get_type(expr->fn);
+	if (type && type->type == SYM_PTR)
+		type = get_real_base_type(type);
+
 	/*
 	 * we just want to record something in the database so that if we have
 	 * two calls like:  frob(4); frob(some_unkown); then on the receiving
 	 * side we know that sometimes frob is called with unknown parameters.
 	 */
 
-	sql_insert_caller_info(expr, INTERNAL, -1, "%call_marker%", "");
+	sql_insert_caller_info(expr, INTERNAL, -1, "%call_marker%", type_to_str(type));
 }
 
 static void print_struct_members(struct expression *call, struct expression *expr, int param, struct stree *stree,
@@ -656,10 +728,21 @@ static int get_param(int param, char **name, struct symbol **sym)
 	return FALSE;
 }
 
-static struct stree *final_states;
-static int prev_func_id = -1;
-static int caller_info_callback(void *unused, int argc, char **argv, char **azColName)
+static int function_signature_matches(const char *sig)
 {
+	char *my_sig;
+
+	my_sig = function_signature();
+	if (!sig || !my_sig)
+		return 1;  /* default to matching */
+	if (strcmp(my_sig, sig) == 0)
+		  return 1;
+	return 0;
+}
+
+static int caller_info_callback(void *_data, int argc, char **argv, char **azColName)
+{
+	struct select_caller_info_data *data = _data;
 	int func_id;
 	long type;
 	long param;
@@ -682,22 +765,31 @@ static int caller_info_callback(void *unused, int argc, char **argv, char **azCo
 	key = argv[3];
 	value = argv[4];
 
-
-	if (prev_func_id == -1)
-		prev_func_id = func_id;
-	if (func_id != prev_func_id) {
+	if (data->prev_func_id == -1)
+		data->prev_func_id = func_id;
+	if (func_id != data->prev_func_id) {
 		stree = __pop_fake_cur_stree();
-		merge_stree(&final_states, stree);
+		if (!data->ignore)
+			merge_stree(&data->final_states, stree);
 		free_stree(&stree);
 		__push_fake_cur_stree();
 		__unnullify_path();
-		prev_func_id = func_id;
+		data->prev_func_id = func_id;
+		data->ignore = 0;
+	}
+
+	if (data->ignore)
+		return 0;
+	if (type == INTERNAL &&
+	    !function_signature_matches(value)) {
+		data->ignore = 1;
+		return 0;
 	}
 
 	if (param >= 0 && !get_param(param, &name, &sym))
 		return 0;
 
-	FOR_EACH_PTR(callbacks, def_callback) {
+	FOR_EACH_PTR(select_caller_info_callbacks, def_callback) {
 		if (def_callback->hook_type == type)
 			def_callback->callback(name, sym, key, value);
 	} END_FOR_EACH_PTR(def_callback);
@@ -705,10 +797,11 @@ static int caller_info_callback(void *unused, int argc, char **argv, char **azCo
 	return 0;
 }
 
-static void get_direct_callers(struct symbol *sym)
+static void get_direct_callers(struct select_caller_info_data *data, struct symbol *sym)
 {
-	sql_select_caller_info("call_id, type, parameter, key, value", sym,
-			caller_info_callback);
+	sql_select_caller_info(data,
+			       "call_id, type, parameter, key, value", sym,
+			       caller_info_callback);
 }
 
 static struct string_list *ptr_names_done;
@@ -761,6 +854,7 @@ static void get_ptr_names(const char *file, const char *name)
 
 static void match_data_from_db(struct symbol *sym)
 {
+	struct select_caller_info_data data = { .prev_func_id = -1 };
 	struct sm_state *sm;
 	struct stree *stree;
 
@@ -769,7 +863,6 @@ static void match_data_from_db(struct symbol *sym)
 
 	__push_fake_cur_stree();
 	__unnullify_path();
-	prev_func_id = -1;
 
 	if (!__inline_fn) {
 		char *ptr;
@@ -787,10 +880,19 @@ static void match_data_from_db(struct symbol *sym)
 			return;
 		}
 
-		get_direct_callers(sym);
+		get_direct_callers(&data, sym);
+
+		stree = __pop_fake_cur_stree();
+		if (!data.ignore)
+			merge_stree(&data.final_states, stree);
+		free_stree(&stree);
+		__push_fake_cur_stree();
+		__unnullify_path();
+		data.prev_func_id = -1;
+		data.ignore = 0;
 
 		FOR_EACH_PTR(ptr_names, ptr) {
-			run_sql(caller_info_callback, NULL,
+			run_sql(caller_info_callback, &data,
 				"select call_id, type, parameter, key, value"
 				" from caller_info where function = '%s' order by call_id",
 				ptr);
@@ -800,18 +902,19 @@ static void match_data_from_db(struct symbol *sym)
 		__free_ptr_list((struct ptr_list **)&ptr_names);
 		__free_ptr_list((struct ptr_list **)&ptr_names_done);
 	} else {
-		get_direct_callers(sym);
+		get_direct_callers(&data, sym);
 	}
 
 	stree = __pop_fake_cur_stree();
-	merge_stree(&final_states, stree);
+	if (!data.ignore)
+		merge_stree(&data.final_states, stree);
 	free_stree(&stree);
 
-	FOR_EACH_SM(final_states, sm) {
+	FOR_EACH_SM(data.final_states, sm) {
 		__set_sm(sm);
 	} END_FOR_EACH_SM(sm);
 
-	free_stree(&final_states);
+	free_stree(&data.final_states);
 }
 
 static int call_implies_callbacks(void *_call, int argc, char **argv, char **azColName)
@@ -836,7 +939,7 @@ static int call_implies_callbacks(void *_call, int argc, char **argv, char **azC
 			if (!arg)
 				continue;
 		}
-		cb->callback(arg, argv[3], argv[4]);
+		cb->callback(call_expr, arg, argv[3], argv[4]);
 	} END_FOR_EACH_PTR(cb);
 
 	return 0;
@@ -897,11 +1000,6 @@ static void global_variable(struct symbol *sym)
 	print_initializer_list(sym->initializer->expr_list, struct_type);
 }
 
-static char *function_signature(void)
-{
-	return type_to_str(get_real_base_type(cur_func_sym));
-}
-
 static void match_return_info(int return_id, char *return_ranges, struct expression *expr)
 {
 	sql_insert_return_states(return_id, return_ranges, INTERNAL, -1, "", function_signature());
@@ -929,7 +1027,7 @@ static void call_return_state_hooks_conditional(struct expression *expr)
 
 	return_id++;
 	FOR_EACH_PTR(returned_state_callbacks, cb) {
-		cb->callback(return_id, return_ranges, expr);
+		cb->callback(return_id, return_ranges, expr->cond_true);
 	} END_FOR_EACH_PTR(cb);
 
 	__push_true_states();
@@ -944,7 +1042,7 @@ static void call_return_state_hooks_conditional(struct expression *expr)
 
 	return_id++;
 	FOR_EACH_PTR(returned_state_callbacks, cb) {
-		cb->callback(return_id, return_ranges, expr);
+		cb->callback(return_id, return_ranges, expr->cond_false);
 	} END_FOR_EACH_PTR(cb);
 
 	__merge_true_states();
@@ -1653,6 +1751,10 @@ static void init_memdb(void)
 		"db/function_type.schema",
 		"db/data_info.schema",
 		"db/parameter_name.schema",
+		"db/constraints.schema",
+		"db/constraints_required.schema",
+		"db/fn_ptr_data_link.schema",
+		"db/fn_data_link.schema",
 	};
 	static char buf[4096];
 	int fd;

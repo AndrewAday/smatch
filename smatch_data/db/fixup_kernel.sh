@@ -11,7 +11,8 @@ delete from function_ptr where function = '(struct file_operations)->read';
 delete from function_ptr where function = '(struct file_operations)->write';
 delete from caller_info where function = '__vfs_write' and caller != 'vfs_write';
 delete from caller_info where function = '__vfs_read' and caller != 'vfs_read';
-delete from caller_info where function = '(struct file_operations)->write' and caller == 'do_loop_readv_writev';
+delete from caller_info where function = '(struct file_operations)->write' and caller = 'do_loop_readv_writev';
+delete from caller_info where function = 'do_splice_from' and caller = 'direct_splice_actor';
 
 /* delete these function pointers which cause false positives */
 delete from caller_info where function = '(struct file_operations)->open' and type != 0;
@@ -97,9 +98,6 @@ update return_states set return = '0-u32max[<=\$2]' where function = 'copy_from_
 update return_states set return = '0-u32max[<=\$2]' where function = '_copy_from_user';
 update return_states set return = '0-u32max[<=\$2]' where function = '__copy_from_user';
 
-/* 64 CPUs aught to be enough for anyone */
-update return_states set return = '1-64' where function = 'cpumask_weight';
-
 update return_states set return = '0-8' where function = '__arch_hweight8';
 update return_states set return = '0-16' where function = '__arch_hweight16';
 update return_states set return = '0-32' where function = '__arch_hweight32';
@@ -154,6 +152,9 @@ update return_states set value = "s32min-s32max[\$1]" where function = 'atomic_s
 
 update return_states set return = '0-32,2147483648-2147483690' where function = '_parse_integer' and return = '0';
 update return_states set value = '0-u64max' where function = '_parse_integer' and type = 1025 and parameter = 2 and key = '*$';
+
+/* delete some function pointers which are sometimes byte units */
+delete from caller_info where function = '(struct i2c_algorithm)->master_xfer and and type = 1027;
 
 EOF
 
