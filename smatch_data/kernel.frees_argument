@@ -77,7 +77,6 @@ free_trace_kprobe 0
 free_trace_uprobe 0
 free_trial_cpuset 0
 free_tty_struct 0
-free_vm_area 0
 fsnotify_final_destroy_group 0
 gss_do_free_ctx 0
 gss_free_cred 0
@@ -144,8 +143,6 @@ sens_destroy 0
 sens_destroy 1
 serio_free_event 0
 snd_card_do_free 0
-snd_pcm_free 0
-__sync_free 0
 system_root_device_release 0
 trace_free_pid_list 0
 trigger_data_free 0
@@ -158,6 +155,5 @@ usblp_cleanup 0
 user_destroy 0
 user_destroy 1
 vcs_poll_data_free 0
-wakeup_source_destroy 0
 widget_release 0
 xz_dec_lzma2_end 0

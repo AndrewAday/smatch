@@ -3,6 +3,7 @@
 __assert_fail
 exit
 __builtin_unreachable
+ata_eh_recover
 ___bpf_prog_run
 __bpf_prog_run128
 __bpf_prog_run160
