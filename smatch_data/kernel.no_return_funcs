@@ -4,6 +4,8 @@ __assert_fail
 exit
 __builtin_unreachable
 ata_eh_recover
+ata_sff_error_handler
+ata_std_error_handler
 ___bpf_prog_run
 __bpf_prog_run128
 __bpf_prog_run160

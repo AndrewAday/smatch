@@ -589,7 +589,6 @@ page_get_link
 parse_acl_data
 parse_args
 path_init
-path_openat
 pcc_mbox_request_channel
 pci_create_slot
 pci_device_group

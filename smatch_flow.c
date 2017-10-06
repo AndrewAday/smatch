@@ -183,11 +183,12 @@ int inlinable(struct expression *expr)
 {
 	struct symbol *sym;
 	struct statement *last_stmt = NULL;
-
+	/* 
 	if (expr->symbol->ident) {
-	    // printf("%s:%d %s:::", get_filename(), get_lineno(), get_function()); 
-	    // printf("inlineable: %s\n", expr->symbol->ident->name);
+	    printf("%s:%d %s:::", get_filename(), get_lineno(), get_function()); 
+	    printf("inlineable: %s\n", expr->symbol->ident->name);
 	}
+	*/
 
 	// if (__inline_fn && !current_syscall)  { /* don't nest */
 	if (__inline_fn) {
@@ -235,8 +236,8 @@ int inlinable(struct expression *expr)
 	}
 
 	/* the magic numbers in this function are pulled out of my bum. */
-	// if (last_stmt->pos.line > sym->pos.line + 20)
-	if (last_stmt->pos.line > sym->pos.line + 1000) {
+	// if (last_stmt->pos.line > sym->pos.line + 20) {
+	if (last_stmt->pos.line > sym->pos.line + 9000) {
 		// printf("\t last_stmt too long yo\n");
 		return 0;
 	}
