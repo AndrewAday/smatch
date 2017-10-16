@@ -6,6 +6,8 @@ __builtin_unreachable
 ata_bmdma_error_handler
 ata_do_eh
 ata_eh_recover
+ata_sff_error_handler
+ata_std_error_handler
 ___bpf_prog_run
 __bpf_prog_run128
 __bpf_prog_run160
@@ -43,6 +45,8 @@ jent_panic
 kthread
 kthreadd
 machine_real_restart
+mld_ifc_timer_expire
+mld_send_cr
 __module_put_and_exit
 native_machine_emergency_restart
 native_machine_halt
