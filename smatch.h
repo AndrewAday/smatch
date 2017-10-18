@@ -204,6 +204,8 @@ int is_impossible_path(void);
 void set_path_impossible(void);
 
 extern FILE *sm_outfd;
+extern FILE *sql_outfd;
+extern FILE *caller_info_fd;
 #define sm_printf(msg...) do { if (final_pass || option_debug || local_debug) fprintf(sm_outfd, msg); } while (0)
 
 static inline void sm_prefix(void)
@@ -257,6 +259,7 @@ static inline void print_implied_debug_msg(void)
 
 #define ALIGN(x, a) (((x) + (a) - 1) & ~((a) - 1))
 
+struct smatch_state *__get_state(int owner, const char *name, struct symbol *sym);
 struct smatch_state *get_state(int owner, const char *name, struct symbol *sym);
 struct smatch_state *get_state_expr(int owner, struct expression *expr);
 struct state_list *get_possible_states(int owner, const char *name,
@@ -280,6 +283,7 @@ struct stree *get_all_states_from_stree(int owner, struct stree *source);
 struct stree *get_all_states_stree(int id);
 struct stree *__get_cur_stree(void);
 int is_reachable(void);
+void add_get_state_hook(void (*fn)(int owner, const char *name, struct symbol *sym));
 
 /* smatch_helper.c */
 DECLARE_PTR_LIST(int_stack, int);
@@ -478,7 +482,7 @@ int assume(struct expression *expr);
 void end_assume(void);
 
 /* smatch_extras.c */
-#define SMATCH_EXTRA 2 /* this is my_id from smatch extra set in smatch.c */
+#define SMATCH_EXTRA 4 /* this is my_id from smatch extra set in smatch.c */
 extern int RETURN_ID;
 
 struct data_range {
@@ -1009,6 +1013,10 @@ char *get_constraint_str(struct expression *expr);
 struct constraint_list *get_constraints(struct expression *expr);
 char *unmet_constraint(struct expression *data, struct expression *offset);
 char *get_required_constraint(const char *data_str);
+
+/* smatch_container_of.c */
+int get_param_from_container_of(struct expression *expr);
+int get_offset_from_container_of(struct expression *expr);
 
 static inline int type_bits(struct symbol *type)
 {

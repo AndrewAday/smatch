@@ -2646,16 +2646,17 @@ static struct token *parse_function_body(struct token *token, struct symbol *dec
 	token = compound_statement(token->next, stmt);
 
 	end_function(decl); 
+	/*
 	if (!(decl->ctype.modifiers & MOD_INLINE))
 		add_symbol(list, decl);
 	else if (is_syscall(decl)) {
 	    add_symbol(list, decl);
-	    /*
 	    printf("parse.c decl: %s\n", decl->ident->name);
 	    char *macro = get_macro_name(decl->pos);
 	    printf("decl macro: %s\n", macro);
-	    */
 	}
+	*/
+	add_symbol(list, decl);
 	check_declaration(decl);
 	decl->definition = decl;
 	prev = decl->same_symbol;

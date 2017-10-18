@@ -54,11 +54,14 @@ do {										\
 		break;								\
 	}									\
 	if (option_info) {							\
+		FILE *tmp_fd = sm_outfd;					\
+		sm_outfd = sql_outfd;						\
 		sm_prefix();							\
 	        sm_printf("SQL: insert %sinto " #table " values(",		\
 			  ignore ? "or ignore " : "");				\
 	        sm_printf(values);						\
 	        sm_printf(");\n");						\
+		sm_outfd = tmp_fd;						\
 	}									\
 } while (0)
 
@@ -222,6 +225,7 @@ static char *function_signature(void)
 void sql_insert_caller_info(struct expression *call, int type,
 		int param, const char *key, const char *value)
 {
+	FILE *tmp_fd = sm_outfd;
 	char *fn;
 
 	if (!option_info && !__inline_call)
@@ -247,10 +251,12 @@ void sql_insert_caller_info(struct expression *call, int type,
 	if (strncmp(fn, "__builtin_", 10) == 0)
 		return;
 
+	sm_outfd = caller_info_fd;
 	sm_msg("SQL_caller_info: insert into caller_info values ("
 	       "'%s', '%s', '%s', %%CALL_ID%%, %d, %d, %d, '%s', '%s');",
 	       get_base_file(), get_function(), fn, is_static(call->fn),
 	       type, param, key, value);
+	sm_outfd = tmp_fd;
 
 	free_string(fn);
 }
@@ -474,6 +480,7 @@ struct select_caller_info_data {
 	struct stree *final_states;
 	int prev_func_id;
 	int ignore;
+	int results;
 };
 
 static void sql_select_caller_info(struct select_caller_info_data *data,
@@ -488,6 +495,11 @@ static void sql_select_caller_info(struct select_caller_info_data *data,
 	}
 
 	if (sym->ident->name && is_common_function(sym->ident->name))
+		return;
+	run_sql(callback, data,
+		"select %s from common_caller_info where %s order by call_id;",
+		cols, get_static_filter(sym));
+	if (data->results)
 		return;
 
 	run_sql(callback, data,
@@ -628,7 +640,17 @@ static void match_call_marker(struct expression *expr)
 	sql_insert_caller_info(expr, INTERNAL, -1, "%call_marker%", type_to_str(type));
 }
 
-static void print_struct_members(struct expression *call, struct expression *expr, int param, struct stree *stree,
+static char *show_offset(int offset)
+{
+	static char buf[64];
+
+	buf[0] = '\0';
+	if (offset != -1)
+		snprintf(buf, sizeof(buf), "(-%d)", offset);
+	return buf;
+}
+
+static void print_struct_members(struct expression *call, struct expression *expr, int param, int offset, struct stree *stree,
 	void (*callback)(struct expression *call, int param, char *printed_name, struct sm_state *sm))
 {
 	struct sm_state *sm;
@@ -654,18 +676,18 @@ static void print_struct_members(struct expression *call, struct expression *exp
 			continue;
 		if (strcmp(name, sm->name) == 0) {
 			if (is_address)
-				snprintf(printed_name, sizeof(printed_name), "*$");
+				snprintf(printed_name, sizeof(printed_name), "*$%s", show_offset(offset));
 			else /* these are already handled. fixme: handle them here */
 				continue;
 		} else if (sm->name[0] == '*' && strcmp(name, sm->name + 1) == 0) {
-			snprintf(printed_name, sizeof(printed_name), "*$");
+			snprintf(printed_name, sizeof(printed_name), "*$%s", show_offset(offset));
 		} else if (strncmp(name, sm->name, len) == 0) {
 			if (isalnum(sm->name[len]))
 				continue;
 			if (is_address)
-				snprintf(printed_name, sizeof(printed_name), "$->%s", sm->name + len + 1);
+				snprintf(printed_name, sizeof(printed_name), "$%s->%s", show_offset(offset), sm->name + len + 1);
 			else
-				snprintf(printed_name, sizeof(printed_name), "$%s", sm->name + len);
+				snprintf(printed_name, sizeof(printed_name), "$%s%s", show_offset(offset), sm->name + len);
 		} else {
 			continue;
 		}
@@ -673,6 +695,58 @@ static void print_struct_members(struct expression *call, struct expression *exp
 	} END_FOR_EACH_SM(sm);
 free:
 	free_string(name);
+}
+
+static int param_used_callback(void *_container, int argc, char **argv, char **azColName)
+{
+	char **container = _container;
+	static char buf[256];
+
+	snprintf(buf, sizeof(buf), "%s", argv[0]);
+	*container = buf;
+	return 0;
+}
+
+static void print_container_struct_members(struct expression *call, struct expression *expr, int param, struct stree *stree,
+	void (*callback)(struct expression *call, int param, char *printed_name, struct sm_state *sm))
+{
+	struct expression *tmp;
+	char *container = NULL;
+	int offset;
+	int holder_offset;
+	char *p;
+
+	run_sql(&param_used_callback, &container,
+		"select key from call_implies where %s and key like '%%$(%%' and parameter = %d limit 1;",
+		get_static_filter(call->fn->symbol), param);
+	if (!container)
+		return;
+
+	p = strchr(container, '-');
+	if (!p)
+		return;
+	offset = atoi(p);
+	p = strchr(p, ')');
+	if (!p)
+		return;
+	p++;
+
+	tmp = get_assigned_expr(expr);
+	if (tmp)
+		expr = tmp;
+
+	if (expr->type != EXPR_PREOP || expr->op != '&')
+		return;
+	expr = strip_expr(expr->unop);
+	holder_offset = get_member_offset_from_deref(expr);
+	if (-holder_offset != offset)
+		return;
+
+	expr = strip_expr(expr->deref);
+	if (expr->type == EXPR_PREOP && expr->op == '*')
+		expr = strip_expr(expr->unop);
+
+	print_struct_members(call, expr, param, holder_offset, stree, callback);
 }
 
 static void match_call_info(struct expression *call)
@@ -691,7 +765,8 @@ static void match_call_info(struct expression *call)
 		stree = get_all_states_stree(cb->owner);
 		i = 0;
 		FOR_EACH_PTR(call->args, arg) {
-			print_struct_members(call, arg, i, stree, cb->callback);
+			print_struct_members(call, arg, i, -1, stree, cb->callback);
+			print_container_struct_members(call, arg, i, stree, cb->callback);
 			i++;
 		} END_FOR_EACH_PTR(arg);
 		free_stree(&stree);
@@ -752,6 +827,8 @@ static int caller_info_callback(void *_data, int argc, char **argv, char **azCol
 	struct symbol *sym = NULL;
 	struct def_callback *def_callback;
 	struct stree *stree;
+
+	data->results = 1;
 
 	if (argc != 5)
 		return 0;
@@ -894,11 +971,26 @@ static void match_data_from_db(struct symbol *sym)
 		FOR_EACH_PTR(ptr_names, ptr) {
 			run_sql(caller_info_callback, &data,
 				"select call_id, type, parameter, key, value"
+				" from common_caller_info where function = '%s' order by call_id",
+				ptr);
+		} END_FOR_EACH_PTR(ptr);
+
+		if (data.results) {
+			FOR_EACH_PTR(ptr_names, ptr) {
+				free_string(ptr);
+			} END_FOR_EACH_PTR(ptr);
+			goto free_ptr_names;
+		}
+
+		FOR_EACH_PTR(ptr_names, ptr) {
+			run_sql(caller_info_callback, &data,
+				"select call_id, type, parameter, key, value"
 				" from caller_info where function = '%s' order by call_id",
 				ptr);
 			free_string(ptr);
 		} END_FOR_EACH_PTR(ptr);
 
+free_ptr_names:
 		__free_ptr_list((struct ptr_list **)&ptr_names);
 		__free_ptr_list((struct ptr_list **)&ptr_names_done);
 	} else {
@@ -1618,6 +1710,29 @@ static int split_by_null_nonnull_param(struct expression *expr)
 	return split_on_bool_sm(sm, expr);
 }
 
+struct expression *strip_expr_statement(struct expression *expr)
+{
+	struct expression *orig = expr;
+	struct statement *stmt, *last_stmt;
+
+	if (!expr)
+		return NULL;
+	if (expr->type == EXPR_PREOP && expr->op == '(')
+		expr = expr->unop;
+	if (expr->type != EXPR_STATEMENT)
+		return orig;
+	stmt = expr->statement;
+	if (!stmt || stmt->type != STMT_COMPOUND)
+		return orig;
+
+	last_stmt = last_ptr_list((struct ptr_list *)stmt->stmts);
+	if (!last_stmt || last_stmt->type == STMT_LABEL)
+		last_stmt = last_stmt->label_statement;
+	if (!last_stmt || last_stmt->type != STMT_EXPRESSION)
+		return orig;
+	return strip_expr(last_stmt->expression);
+}
+
 static void call_return_state_hooks(struct expression *expr)
 {
 	struct returned_state_callback *cb;
@@ -1630,6 +1745,7 @@ static void call_return_state_hooks(struct expression *expr)
 		return;
 
 	expr = strip_expr(expr);
+	expr = strip_expr_statement(expr);
 
 	if (is_impossible_path())
 		goto vanilla;

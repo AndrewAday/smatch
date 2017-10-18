@@ -20,14 +20,12 @@
 
 static int my_id;
 
-struct stree *used_stree;
+static struct stree *used_stree;
+static struct stree_stack *saved_stack;
+
 STATE(used);
 
-/*
- * I am a loser.  This should be a proper hook, but I am too lazy.  I'll add
- * that stuff if we have a second user.
- */
-void __get_state_hook(int owner, const char *name, struct symbol *sym)
+static void get_state_hook(int owner, const char *name, struct symbol *sym)
 {
 	int arg;
 
@@ -37,10 +35,8 @@ void __get_state_hook(int owner, const char *name, struct symbol *sym)
 		return;
 
 	arg = get_param_num_from_sym(sym);
-	if (arg < 0)
-		return;
-
-	set_state_stree(&used_stree, my_id, name, sym, &used);
+	if (arg >= 0)
+		set_state_stree(&used_stree, my_id, name, sym, &used);
 }
 
 static void set_param_used(struct expression *call, struct expression *arg, char *key, char *unused)
@@ -54,15 +50,13 @@ static void set_param_used(struct expression *call, struct expression *arg, char
 		goto free;
 
 	arg_nr = get_param_num_from_sym(sym);
-	if (arg_nr < 0)
-		goto free;
-
-	set_state(my_id, name, sym, &used);
+	if (arg_nr >= 0)
+		set_state(my_id, name, sym, &used);
 free:
 	free_string(name);
 }
 
-static void process_states(struct stree *stree)
+static void process_states(void)
 {
 	struct sm_state *tmp;
 	int arg;
@@ -70,21 +64,45 @@ static void process_states(struct stree *stree)
 
 	FOR_EACH_SM(used_stree, tmp) {
 		arg = get_param_num_from_sym(tmp->sym);
+		if (arg < 0)
+			continue;
 		name = get_param_name(tmp);
 		if (!name)
 			continue;
-		sql_insert_call_implies(PARAM_USED, arg, name, "1");
+
+		sql_insert_call_implies(PARAM_USED, arg, name, "");
 	} END_FOR_EACH_SM(tmp);
 
 	free_stree(&used_stree);
+}
+
+static void match_function_def(struct symbol *sym)
+{
+	free_stree(&used_stree);
+}
+
+static void match_save_states(struct expression *expr)
+{
+	push_stree(&saved_stack, used_stree);
+	used_stree = NULL;
+}
+
+static void match_restore_states(struct expression *expr)
+{
+	free_stree(&used_stree);
+	used_stree = pop_stree(&saved_stack);
 }
 
 void register_param_used(int id)
 {
 	my_id = id;
 
-	if (!option_info)
-		return;
+	add_hook(&match_function_def, FUNC_DEF_HOOK);
+
+	add_get_state_hook(&get_state_hook);
+
+	add_hook(&match_save_states, INLINE_FN_START);
+	add_hook(&match_restore_states, INLINE_FN_END);
 
 	select_call_implies_hook(PARAM_USED, &set_param_used);
 	all_return_states_hook(&process_states);

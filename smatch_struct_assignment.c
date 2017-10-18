@@ -290,6 +290,86 @@ static int returns_zeroed_mem(struct expression *expr)
 	return 0;
 }
 
+static int copy_containter_states(struct expression *left, struct expression *right, int offset)
+{
+	char *left_name = NULL, *right_name = NULL;
+	struct symbol *left_sym, *right_sym;
+	struct sm_state *sm, *new_sm;
+	int ret = 0;
+	int len;
+	char buf[64];
+	char new_name[128];
+
+	right_name = expr_to_var_sym(right, &right_sym);
+	if (!right_name || !right_sym)
+		goto free;
+	left_name = expr_to_var_sym(left, &left_sym);
+	if (!left_name || !left_sym)
+		goto free;
+
+	len = snprintf(buf, sizeof(buf), "%s(-%d)", right_name, offset);
+	if (len >= sizeof(buf))
+		goto free;
+
+	FOR_EACH_SM(__get_cur_stree(), sm) {
+		if (sm->sym != right_sym)
+			continue;
+		if (strncmp(sm->name, buf, len) != 0)
+			continue;
+		snprintf(new_name, sizeof(new_name), "%s%s", left_name, sm->name + len);
+		new_sm = clone_sm(sm);
+		new_sm->name = alloc_sname(new_name);
+		new_sm->sym = left_sym;
+		__set_sm(new_sm);
+		ret = 1;
+	} END_FOR_EACH_SM(sm);
+free:
+	free_string(left_name);
+	free_string(right_name);
+	return ret;
+}
+
+static int handle_param_offsets(struct expression *expr)
+{
+	struct expression *right;
+	sval_t sval;
+
+	right = strip_expr(expr->right);
+
+	if (right->type != EXPR_BINOP || right->op != '-')
+		return 0;
+
+	if (!get_value(right->right, &sval))
+		return 0;
+
+	right = get_assigned_expr(right->left);
+	if (!right)
+		return 0;
+	return copy_containter_states(expr->left, right, sval.value);
+}
+
+static void returns_container_of(struct expression *expr, int param, char *key, char *value)
+{
+	struct expression *call, *arg;
+	int offset;
+
+	if (expr->type != EXPR_ASSIGNMENT || expr->op != '=')
+		return;
+	call = strip_expr(expr->right);
+	if (call->type != EXPR_CALL)
+		return;
+	if (param != -1)
+		return;
+	param = atoi(key);
+	offset = atoi(value);
+
+	arg = get_argument_from_call_expr(call->args, param);
+	if (!arg)
+		return;
+
+	copy_containter_states(expr->left, arg, -offset);
+}
+
 void __fake_struct_member_assignments(struct expression *expr)
 {
 	struct symbol *struct_type;
@@ -310,6 +390,9 @@ void __fake_struct_member_assignments(struct expression *expr)
 
 	struct_type = get_struct_type(expr->left);
 	if (!struct_type)
+		return;
+
+	if (handle_param_offsets(expr))
 		return;
 
 	if (returns_zeroed_mem(expr->right))
@@ -447,4 +530,6 @@ void register_struct_assignment(int id)
 	add_hook(&unop_expr, OP_HOOK);
 	register_clears_param();
 	select_return_states_hook(PARAM_CLEARED, &db_param_cleared);
+
+	select_return_states_hook(CONTAINER, &returns_container_of);
 }

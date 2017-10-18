@@ -4,7 +4,9 @@
 #endif
 
 CK(register_db_call_marker) /* always has to be first  */
-CK(register_smatch_extra) /* smatch_extra always has to be second */
+CK(register_param_used)     /* get_state_hooks have to be registered before smatch_extra */
+CK(register_container_of)
+CK(register_smatch_extra)   /* smatch_extra always has to be SMATCH_EXTRA */
 CK(register_smatch_extra_links)
 CK(register_modification_hooks)
 CK(register_definition_db_callbacks)
@@ -43,7 +45,6 @@ CK(register_auto_copy)
 CK(register_type_links)
 CK(register_impossible)
 CK(register_impossible_return)
-CK(register_param_used)
 CK(register_strings)
 CK(register_real_absolute)
 CK(register_imaginary_absolute)
@@ -136,6 +137,7 @@ CK(check_indenting)
 CK(check_unreachable)
 CK(check_no_if_block)
 CK(check_buffer_too_small_for_struct)
+CK(check_uninitialized)
 CK(check_signed_integer_overflow_check)
 CK(check_continue_vs_break)
 CK(check_impossible_mask)
