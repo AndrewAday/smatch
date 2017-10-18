@@ -12,4 +12,3 @@ i915_perf_unregister 0
 kset_unregister 0
 pci_destroy_slot 0
 pci_put_host_bridge_device 0
-remove_sysfs_fw_map_entry 0

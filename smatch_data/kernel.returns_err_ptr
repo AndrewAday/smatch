@@ -182,6 +182,7 @@ devm_regmap_field_alloc
 __devm_regmap_init
 devm_rtc_allocate_device
 devm_rtc_device_register
+devm_thermal_zone_of_sensor_register
 devpts_acquire
 devpts_mntget
 devpts_pty_new
@@ -291,7 +292,6 @@ flock_make_lock
 flow_cache_lookup
 follow_huge_addr
 follow_page_pte
-frame_vector_pages
 freeze_bdev
 freezer_css_alloc
 freq_reg_info_regd
@@ -589,6 +589,7 @@ page_get_link
 parse_acl_data
 parse_args
 path_init
+path_openat
 pcc_mbox_request_channel
 pci_create_slot
 pci_device_group
@@ -749,6 +750,7 @@ tcp_gso_segment
 __thermal_cooling_device_register
 thermal_zone_device_register
 thermal_zone_get_zone_by_name
+thermal_zone_of_sensor_register
 tracing_get_dentry
 tracing_init_dentry
 __tracing_open

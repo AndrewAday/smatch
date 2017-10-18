@@ -1871,6 +1871,7 @@ static void init_memdb(void)
 		"db/constraints_required.schema",
 		"db/fn_ptr_data_link.schema",
 		"db/fn_data_link.schema",
+		"db/common_caller_info.schema",
 	};
 	static char buf[4096];
 	int fd;
