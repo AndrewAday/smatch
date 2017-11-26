@@ -236,15 +236,15 @@ static int save_op_callback(void *_p, int argc, char **argv, char **azColName)
 
 static int save_str_callback(void *_p, int argc, char **argv, char **azColName)
 {
-	char *p = _p;
+	char **p = _p;
 
-	if (!p) {
-		p = alloc_string(argv[0]);
+	if (!*p) {
+		*p = alloc_string(argv[0]);
 	} else {
 		char buf[256];
 
-		snprintf(buf, sizeof(buf), "%s, %s", p, argv[0]);
-		p = alloc_string(buf);
+		snprintf(buf, sizeof(buf), "%s, %s", *p, argv[0]);
+		*p = alloc_string(buf);
 	}
 	return 0;
 }
@@ -292,6 +292,7 @@ char *unmet_constraint(struct expression *data, struct expression *offset)
 	if (!required)
 		return NULL;
 
+	/* check the list of bounds on our index against the list that work */
 	FOR_EACH_PTR(list, con) {
 		char *con_str;
 
@@ -323,8 +324,6 @@ free_data:
 struct string_list *saved_constraints;
 static void save_new_constraint(const char *con)
 {
-	if (local_debug)
-		sm_msg("saving '%s'", con);
 	if (list_has_string(saved_constraints, con))
 		return;
 	insert_string(&saved_constraints, con);

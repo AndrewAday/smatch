@@ -61,8 +61,6 @@ int get_offset_from_container_of(struct expression *expr)
 	struct expression *param_expr;
 	struct symbol *type;
 	sval_t sval;
-	int param;
-
 
 	type = get_type(expr);
 	if (!type || type->type != SYM_PTR)
@@ -79,9 +77,6 @@ int get_offset_from_container_of(struct expression *expr)
 
 	param_expr = get_assigned_expr(expr->left);
 	if (!param_expr)
-		return -1;
-	param = get_param_num(param_expr);
-	if (param < 0)
 		return -1;
 
 	return sval.value;
@@ -179,7 +174,7 @@ static void process_states(void)
 		name = get_container_name(tmp, offset);
 		if (!name)
 			continue;
-		sql_insert_call_implies(PARAM_USED, arg, name, "");
+		sql_insert_call_implies(CONTAINER, arg, name, "");
 	} END_FOR_EACH_SM(tmp);
 
 	free_stree(&used_stree);
@@ -219,6 +214,7 @@ static void print_returns_container_of(int return_id, char *return_ranges, struc
 	snprintf(key, sizeof(key), "%d", param);
 	snprintf(value, sizeof(value), "-%d", offset);
 
+	/* no need to add it to call_implies because it's not really param_used */
 	sql_insert_return_states(return_id, return_ranges, CONTAINER, -1,
 			key, value);
 }
@@ -248,7 +244,7 @@ static void returns_container_of(struct expression *expr, int param, char *key, 
 	if (param < 0)
 		return;
 	snprintf(buf, sizeof(buf), "$(%d)", offset);
-	sql_insert_call_implies(PARAM_USED, param, buf, "");
+	sql_insert_call_implies(CONTAINER, param, buf, "");
 }
 
 void register_container_of(int id)
@@ -262,7 +258,7 @@ void register_container_of(int id)
 	add_hook(&match_save_states, INLINE_FN_START);
 	add_hook(&match_restore_states, INLINE_FN_END);
 
-	select_call_implies_hook(PARAM_USED, &set_param_used);
+	select_call_implies_hook(CONTAINER, &set_param_used);
 	all_return_states_hook(&process_states);
 
 	add_split_return_callback(&print_returns_container_of);

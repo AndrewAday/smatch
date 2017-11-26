@@ -250,6 +250,8 @@ void sql_insert_caller_info(struct expression *call, int type,
 
 	if (strncmp(fn, "__builtin_", 10) == 0)
 		return;
+	if (type != INTERNAL && is_common_function(fn))
+		return;
 
 	sm_outfd = caller_info_fd;
 	sm_msg("SQL_caller_info: insert into caller_info values ("
@@ -716,9 +718,18 @@ static void print_container_struct_members(struct expression *call, struct expre
 	int holder_offset;
 	char *p;
 
+	if (!call->fn || call->fn->type != EXPR_SYMBOL)
+		return;
+
+	/*
+	 * We can't use the in-mem DB because we have to parse the function
+	 * first, then we know if it takes a container, then we know to pass it
+	 * the container data.
+	 *
+	 */
 	run_sql(&param_used_callback, &container,
-		"select key from call_implies where %s and key like '%%$(%%' and parameter = %d limit 1;",
-		get_static_filter(call->fn->symbol), param);
+		"select key from call_implies where %s and type = %d and key like '%%$(%%' and parameter = %d limit 1;",
+		get_static_filter(call->fn->symbol), CONTAINER, param);
 	if (!container)
 		return;
 
@@ -1336,17 +1347,16 @@ static const char *get_return_ranges_str(struct expression *expr, struct range_l
 		snprintf(buf, sizeof(buf), "%s%s", return_ranges, compare_str);
 		return alloc_sname(buf);
 	}
-
 	if (math_str) {
 		snprintf(buf, sizeof(buf), "%s[%s]", return_ranges, math_str);
 		return alloc_sname(buf);
 	}
-
 	compare_str = get_return_compare_str(expr);
 	if (compare_str) {
 		snprintf(buf, sizeof(buf), "%s%s", return_ranges, compare_str);
 		return alloc_sname(buf);
 	}
+
 	return return_ranges;
 }
 
@@ -1887,13 +1897,19 @@ static void init_memdb(void)
 	for (i = 0; i < ARRAY_SIZE(schema_files); i++) {
 		fd = open_data_file(schema_files[i]);
 		if (fd < 0) {
-			mem_db = NULL;
-			return;
+			printf("failed to open: %s\n", schema_files[i]);
+			continue;
 		}
 		ret = read(fd, buf, sizeof(buf));
+		if (ret < 0) {
+			printf("failed to read: %s\n", schema_files[i]);
+			continue;
+		}
+		close(fd);
 		if (ret == sizeof(buf)) {
 			printf("Schema file too large:  %s (limit %zd bytes)",
 			       schema_files[i], sizeof(buf));
+			continue;
 		}
 		buf[ret] = '\0';
 		rc = sqlite3_exec(mem_db, buf, NULL, NULL, &err);

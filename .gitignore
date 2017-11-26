@@ -9,6 +9,9 @@
 .gdb_history
 .ycm*
 *.patch
+*.c.smatch
+*.c.smatch.caller_info
+*.c.smatch.sql
 
 # generated
 pre-process.h

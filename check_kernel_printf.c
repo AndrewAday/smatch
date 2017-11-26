@@ -336,7 +336,7 @@ static struct symbol *_typedef_lookup(const char *name)
 	node = lookup_symbol(id, NS_TYPEDEF);
 	if (!node || node->type != SYM_NODE)
 		return NULL;
-	return node->ctype.base_type;
+	return get_real_base_type(node);
 }
 
 static void typedef_lookup(struct typedef_lookup *tl)
@@ -639,10 +639,13 @@ static void flag_string(const char *fmt, struct symbol *type, struct symbol *bas
 
 static void device_node_string(const char *fmt, struct symbol *type, struct symbol *basetype, int vaidx)
 {
-	// static struct typedef_lookup gfp = { .name = "gfp_t" };
-
-	if (fmt[1] != 'F')
+	if (fmt[1] != 'F') {
 		sm_msg("error: %%pO can only be followed by 'F'");
+		return;
+	}
+	if (!is_struct_tag(basetype, "device_node"))
+		sm_msg("error: '%%pOF' expects argument of type 'struct device_node*', argument %d has type '%s'",
+		       vaidx, type_to_str(type));
 }
 
 static void
@@ -936,6 +939,35 @@ static bool is_integer_specifier(int type)
 	}
 }
 
+static int
+is_cast_expr(struct expression *expr)
+{
+	switch (expr->type) {
+	case EXPR_CAST:
+	case EXPR_FORCE_CAST:
+		/* not EXPR_IMPLIED_CAST for our purposes */
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static void
+check_cast_from_pointer(const char *fmt, int len, struct expression *arg, int va_idx)
+{
+	/*
+	 * This can easily be fooled by passing 0+(long)ptr or doing
+	 * "long local_var = (long)ptr" and passing local_var to
+	 * %lx. Tough.
+	 */
+	if (!is_cast_expr(arg))
+		return;
+	while (is_cast_expr(arg))
+		arg = arg->cast_expression;
+	if (is_ptr_type(get_type(arg)))
+		sm_msg("warn: argument %d to %.*s specifier is cast from pointer",
+			va_idx, len, fmt);
+}
 
 static void
 do_check_printf_call(const char *caller, const char *name, struct expression *callexpr, struct expression *fmtexpr, int vaidx)
@@ -964,7 +996,7 @@ do_check_printf_call(const char *caller, const char *name, struct expression *ca
 		 * below and we'll spam+return.
 		 */
 		struct symbol *sym = fmtexpr->symbol;
-		if (sym->initializer &&
+		if (sym && sym->initializer &&
 		    (is_array_of_const_char(sym) ||
 		     is_const_pointer_to_const_char(sym))) {
 			fmtexpr = strip_parens(sym->initializer);
@@ -1008,9 +1040,13 @@ do_check_printf_call(const char *caller, const char *name, struct expression *ca
 
 		if (spec.flags & SPECIAL && has_hex_prefix(orig_fmt, old_fmt))
 			sm_msg("warn: '%.2s' prefix is redundant when # flag is used", old_fmt-2);
-		if (is_integer_specifier(spec.type) && spec.base != 16 && has_hex_prefix(orig_fmt, old_fmt))
-			sm_msg("warn: '%.2s' prefix is confusing together with '%.*s' specifier",
-			       old_fmt-2, (int)(fmt-old_fmt), old_fmt);
+		if (is_integer_specifier(spec.type)) {
+			if (spec.base != 16 && has_hex_prefix(orig_fmt, old_fmt))
+				sm_msg("warn: '%.2s' prefix is confusing together with '%.*s' specifier",
+				       old_fmt-2, (int)(fmt-old_fmt), old_fmt);
+
+			check_cast_from_pointer(old_fmt, read, arg, vaidx);
+		}
 
 		switch (spec.type) {
 		/* case FORMAT_TYPE_NONE: */
