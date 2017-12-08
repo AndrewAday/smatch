@@ -4,8 +4,6 @@ __assert_fail
 exit
 __builtin_unreachable
 ata_bmdma_error_handler
-ata_sff_error_handler
-ata_std_error_handler
 ___bpf_prog_run
 __bpf_prog_run128
 __bpf_prog_run160
@@ -80,6 +78,7 @@ SYSC_exit
 SYSC_exit_group
 SyS_exit
 SyS_exit_group
+verify_disabled_dpll_state
 vlan_dev_real_dev
 wait_for_panic
 x86_64_start_kernel

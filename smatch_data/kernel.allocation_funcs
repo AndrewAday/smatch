@@ -175,10 +175,12 @@ metadata_dst_alloc
 minstrel_alloc
 minstrel_alloc_sta
 minstrel_ht_alloc_sta
+__napi_alloc_skb
 neigh_alloc
 neigh_hash_alloc
 nested_bucket_table_alloc
 net_alloc_generic
+__netdev_alloc_skb
 netdev_create_hash
 netlbl_secattr_cache_alloc
 netlbl_unlhsh_add_iface
@@ -230,6 +232,7 @@ posix_acl_alloc
 pps_register_source
 __proc_create
 protection_domain_alloc
+__pskb_copy_fclone
 qdisc_class_hash_alloc
 queue_new
 rate_control_alloc
@@ -257,6 +260,8 @@ sdev_evt_alloc
 seq_create_client1
 __seq_open_private
 simple_xattr_alloc
+skb_copy
+skb_copy_expand
 skcipher_request_alloc
 snd_hda_codec_pcm_new
 snd_info_create_entry
